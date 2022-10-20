@@ -171,10 +171,17 @@ class VersioningManager(object):
         self,
         actor_cls=None,
         schema_name=None,
-        use_statement_level_triggers=True
+        use_statement_level_triggers=True,
+        config_attribute='__versioned__',
     ):
         if actor_cls is not None:
             self._actor_cls = actor_cls
+
+        if isinstance(config_attribute, str) and config_attribute.startswith('__') and config_attribute.endswith('__'):
+            self.config_attribute = config_attribute
+        else:
+            raise ValueError('Invalid config attribute, must be a string that starts and ends with __')
+
         self.values = {}
         self.listeners = (
             (
@@ -349,9 +356,9 @@ class VersioningManager(object):
 
     def is_modified(self, obj_or_session):
         if hasattr(obj_or_session, '__mapper__'):
-            if not hasattr(obj_or_session, '__versioned__'):
+            if not hasattr(obj_or_session, self.config_attribute):
                 raise ClassNotVersioned(obj_or_session.__class__.__name__)
-            excluded = obj_or_session.__versioned__.get('exclude', [])
+            excluded = getattr(obj_or_session, self.config_attribute).get('exclude', [])
             return bool(
                 set([
                     column.name
@@ -362,7 +369,7 @@ class VersioningManager(object):
             return any(
                 self.is_modified(entity) or entity in obj_or_session.deleted
                 for entity in obj_or_session
-                if hasattr(entity, '__versioned__')
+                if hasattr(entity, self.config_attribute)
             )
 
     def receive_before_flush(self, session, flush_context, instances):
@@ -376,7 +383,7 @@ class VersioningManager(object):
         :mapper mapper: SQLAlchemy mapper object
         :cls cls: SQLAlchemy declarative class
         """
-        if hasattr(cls, '__versioned__') and cls not in self.pending_classes:
+        if hasattr(cls, self.config_attribute) and cls not in self.pending_classes:
             self.pending_classes.add(cls)
 
     def configure_versioned_classes(self):
@@ -385,7 +392,7 @@ class VersioningManager(object):
         instrumentation process.
         """
         for cls in self.pending_classes:
-            self.audit_table(cls.__table__, cls.__versioned__.get('exclude'))
+            self.audit_table(cls.__table__, getattr(cls, self.config_attribute).get('exclude'))
         assign_actor(self.base, self.transaction_cls, self.actor_cls)
 
     def attach_table_listeners(self):
